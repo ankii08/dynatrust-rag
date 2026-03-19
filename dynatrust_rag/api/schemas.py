@@ -115,7 +115,7 @@ class ProvenanceStep(BaseModel):
 class Provenance(BaseModel):
     """
     Complete provenance record for an answer.
-    
+
     This structure enables:
     - Full reproducibility of answers
     - Attribution analysis (which sources contributed)
@@ -126,12 +126,24 @@ class Provenance(BaseModel):
         default_factory=list,
         description="Ordered list of provenance steps"
     )
+    source_docs: List[str] = Field(
+        default_factory=list,
+        description="Source document identifiers that contributed to the answer"
+    )
+    row_references: List[RowReference] = Field(
+        default_factory=list,
+        description="Database rows that contributed to the answer"
+    )
+    sql_executed: List[str] = Field(
+        default_factory=list,
+        description="SQL queries executed during retrieval (for reproducibility)"
+    )
     total_rows_accessed: int = Field(
-        0, 
+        0,
         description="Total number of database rows accessed"
     )
     total_chunks_retrieved: int = Field(
-        0, 
+        0,
         description="Total number of text chunks retrieved"
     )
     query_classification: QueryType = Field(
@@ -214,72 +226,76 @@ class TimeWindow(BaseModel):
 class QueryRequest(BaseModel):
     """
     Request model for the /dynatrust/query endpoint.
-    
+
     Accepts a natural-language question with optional spatial,
     temporal, and filtering constraints.
     """
+    model_config = {
+        "str_strip_whitespace": True,
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "question": "What anomalies were detected near the port in the last 24 hours?",
+                    "spatial": {
+                        "latitude": 42.4833,
+                        "longitude": 27.4833,
+                        "radius_meters": 5000
+                    },
+                    "time_window": {
+                        "last_n_hours": 24
+                    },
+                    "include_provenance": True,
+                }
+            ]
+        },
+    }
+
     question: str = Field(
-        ..., 
-        min_length=1, 
+        ...,
+        min_length=1,
         max_length=2000,
         description="Natural language question to answer"
     )
-    
+
     # Optional constraints
     spatial: Optional[SpatialConstraint] = Field(
-        None, 
+        None,
         description="Optional spatial constraint (location + radius)"
     )
     time_window: Optional[TimeWindow] = Field(
-        None, 
+        None,
         description="Optional temporal constraint"
     )
-    
+
     # Filtering options
     source_types: Optional[List[str]] = Field(
-        None, 
+        None,
         description="Filter to specific source types"
     )
     entity_ids: Optional[List[str]] = Field(
-        None, 
+        None,
         description="Filter to specific entity IDs"
     )
-    
+
     # Control flags
     include_provenance: bool = Field(
-        True, 
+        True,
         description="Whether to include detailed provenance in response"
     )
     include_staleness_info: bool = Field(
-        True, 
+        True,
         description="Whether to include staleness information"
     )
     force_live_data_only: bool = Field(
-        False, 
+        False,
         description="If true, skip semantic search and use only live SQL/spatial"
     )
-    
+
     # For evaluation/debugging
     session_id: Optional[str] = Field(
-        None, 
+        None,
         description="Optional session ID for query grouping"
     )
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "question": "What anomalies were detected near the port in the last 24 hours?",
-                "spatial": {
-                    "latitude": 42.4833,
-                    "longitude": 27.4833,
-                    "radius_meters": 5000
-                },
-                "time_window": {
-                    "last_n_hours": 24
-                },
-                "include_provenance": True
-            }
-        }
 
 
 # =============================================================================
@@ -323,38 +339,37 @@ class QueryResponse(BaseModel):
     
     # For evaluation
     confidence_score: Optional[float] = Field(
-        None, 
-        ge=0.0, 
+        None,
+        ge=0.0,
         le=1.0,
         description="Confidence in the answer (0-1)"
     )
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "answer": "There were 3 anomalies detected near the port in the last 24 hours: 2 trajectory deviations and 1 speed anomaly.",
-                "query_id": "q_abc123",
-                "query_type": "hybrid",
-                "processing_time_ms": 245.3,
-                "provenance": {
-                    "steps": [
-                        {
-                            "type": "spatial",
-                            "query": "SELECT ... ST_DWithin(...)",
-                            "tables": ["observations_core", "anomalies"],
-                            "rows": [
-                                {"table": "anomalies", "id": 42},
-                                {"table": "anomalies", "id": 43}
-                            ]
-                        }
-                    ],
-                    "total_rows_accessed": 5,
-                    "query_classification": "hybrid"
-                },
-                "staleness_info": {
-                    "vector_index_lag_seconds": 1800,
-                    "used_semantic_results": True,
-                    "staleness_detected": False
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "answer": "There were 3 anomalies detected near the port in the last 24 hours.",
+                    "query_id": "q_abc123",
+                    "query_type": "hybrid",
+                    "processing_time_ms": 245.3,
+                    "provenance": {
+                        "steps": [
+                            {
+                                "type": "spatial",
+                                "query": "SELECT ... ST_DWithin(...)",
+                                "tables": ["observations_core", "anomalies"],
+                            }
+                        ],
+                        "total_rows_accessed": 5,
+                        "query_classification": "hybrid",
+                    },
+                    "staleness_info": {
+                        "vector_index_lag_seconds": 1800,
+                        "used_semantic_results": True,
+                        "staleness_detected": False,
+                    },
                 }
-            }
+            ]
         }
+    }

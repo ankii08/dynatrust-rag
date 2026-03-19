@@ -10,6 +10,7 @@ from .provider import (
     OpenAIEmbeddingProvider,
     LocalEmbeddingProvider,
     get_default_embedding_provider,
+    reset_default_provider,
     EMBEDDING_DIM,
 )
 
@@ -18,5 +19,6 @@ __all__ = [
     "OpenAIEmbeddingProvider",
     "LocalEmbeddingProvider",
     "get_default_embedding_provider",
+    "reset_default_provider",
     "EMBEDDING_DIM",
 ]

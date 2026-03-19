@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 # Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 async def test_embedding_provider():
@@ -22,7 +22,7 @@ async def test_embedding_provider():
     print("Testing Embedding Provider")
     print("=" * 50)
     
-    from services.dynatrust_rag.embedding import get_default_embedding_provider, EMBEDDING_DIM
+    from dynatrust_rag.embedding import get_default_embedding_provider, EMBEDDING_DIM
     
     try:
         provider = await get_default_embedding_provider()
@@ -69,7 +69,7 @@ def test_chunker():
     print("Testing Document Chunker")
     print("=" * 50)
     
-    from services.dynatrust_rag.ingestion import DocumentChunker, Chunk
+    from dynatrust_rag.ingestion import DocumentChunker, Chunk
     
     chunker = DocumentChunker(chunk_size=200, chunk_overlap=20)
     print(f"✓ Chunker initialized (size={chunker.chunk_size}, overlap={chunker.chunk_overlap})")
@@ -125,7 +125,7 @@ def test_config():
     print("Testing Configuration")
     print("=" * 50)
     
-    from services.dynatrust_rag.config import get_config
+    from dynatrust_rag.config import get_config
     
     config = get_config()
     print(f"✓ Config loaded")
@@ -144,7 +144,7 @@ def test_schemas():
     print("Testing API Schemas")
     print("=" * 50)
     
-    from services.dynatrust_rag.api.schemas import QueryRequest, QueryResponse, Provenance
+    from dynatrust_rag.api.schemas import QueryRequest, QueryResponse, Provenance
     
     # Test QueryRequest
     request = QueryRequest(
@@ -163,7 +163,7 @@ async def test_retriever_base():
     print("Testing Retriever Base Classes")
     print("=" * 50)
     
-    from services.dynatrust_rag.retrieval.base import (
+    from dynatrust_rag.retrieval.base import (
         DocumentChunk, StructuredRow, SpatialRow, RetrievalResult
     )
     
@@ -193,9 +193,9 @@ async def test_llm_answerer():
     print("Testing LLM AnswerGenerator")
     print("=" * 50)
     
-    from services.dynatrust_rag.llm.answerer import AnswerGenerator, LocalLLMProvider
-    from services.dynatrust_rag.retrieval.base import DocumentChunk, RetrievalResult
-    from services.dynatrust_rag.api.schemas import QueryRequest
+    from dynatrust_rag.llm.answerer import AnswerGenerator, LocalLLMProvider
+    from dynatrust_rag.retrieval.base import DocumentChunk, RetrievalResult
+    from dynatrust_rag.api.schemas import QueryRequest
     
     # Create a simple retrieval result
     chunks = [
@@ -251,8 +251,8 @@ async def test_hybrid_retrieval():
     print("Testing Hybrid Retrieval Router")
     print("=" * 50)
     
-    from services.dynatrust_rag.api.schemas import QueryRequest
-    from services.dynatrust_rag.retrieval.router import HybridRetrievalRouter
+    from dynatrust_rag.api.schemas import QueryRequest
+    from dynatrust_rag.retrieval.router import HybridRetrievalRouter
     
     router = HybridRetrievalRouter()
     print("✓ HybridRetrievalRouter initialized")
@@ -283,8 +283,8 @@ async def test_end_to_end():
     # Disable LLM for this test to avoid API calls
     os.environ["DYNATRUST_DISABLE_LLM"] = "1"
     
-    from services.dynatrust_rag.api.schemas import QueryRequest
-    from services.dynatrust_rag.retrieval.router import hybrid_retrieve
+    from dynatrust_rag.api.schemas import QueryRequest
+    from dynatrust_rag.retrieval.router import hybrid_retrieve
     
     request = QueryRequest(
         question="What is DynaTrust-RAG and how does it work?",

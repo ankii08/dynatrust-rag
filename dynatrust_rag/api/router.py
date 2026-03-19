@@ -36,6 +36,9 @@ from .schemas import (
 from ..retrieval.router import hybrid_retrieve
 from ..retrieval.base import RetrievalResult
 from ..llm.answerer import AnswerGenerator, get_answer_generator as _get_answer_generator
+from ..staleness.tracker import StalenessTracker
+from ..evaluation.logger import QueryLogger
+from ..config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +113,8 @@ def _build_provenance(result: RetrievalResult) -> Provenance:
         row_references=row_refs,
         sql_executed=result.executed_sql,
         steps=steps,
+        total_rows_accessed=len(result.structured_rows) + len(result.spatial_rows),
+        total_chunks_retrieved=len(result.semantic_chunks),
     )
 
 
@@ -180,32 +185,6 @@ async def _generate_llm_answer(
         return _build_answer_summary(result), False
 
 
-def _build_staleness_info(result: RetrievalResult) -> StalenessInfo:
-    """
-    Build staleness info from retrieval metadata.
-    In production, this would query vector_index_metadata table.
-    """
-    # Check if metadata contains staleness info
-    index_ts = result.metadata.get("index_last_updated")
-    data_ts = result.metadata.get("data_last_modified")
-
-    if index_ts and data_ts:
-        lag_seconds = (data_ts - index_ts).total_seconds()
-        is_stale = lag_seconds > 300  # Consider stale if > 5 minutes lag
-    else:
-        # Default to current time if no metadata
-        index_ts = datetime.now(timezone.utc)
-        data_ts = datetime.now(timezone.utc)
-        lag_seconds = 0.0
-        is_stale = False
-
-    return StalenessInfo(
-        is_stale=is_stale,
-        index_last_updated=index_ts if isinstance(index_ts, datetime) else datetime.now(timezone.utc),
-        data_last_modified=data_ts if isinstance(data_ts, datetime) else datetime.now(timezone.utc),
-        lag_seconds=lag_seconds,
-    )
-
 
 @dynatrust_router.post("/query", response_model=QueryResponse)
 async def query_endpoint(request: QueryRequest) -> QueryResponse:
@@ -243,9 +222,10 @@ async def query_endpoint(request: QueryRequest) -> QueryResponse:
     """
     start_time = time.time()
     query_id = str(uuid.uuid4())
-    
+    config = get_config()
+
     try:
-        # Run hybrid retrieval - pass the whole request, not just the query text
+        # 1. Run hybrid retrieval
         result: RetrievalResult = await hybrid_retrieve(request)
 
         # Determine query type from result metadata
@@ -259,43 +239,41 @@ async def query_endpoint(request: QueryRequest) -> QueryResponse:
         else:
             query_type = QueryType.TEXT_ONLY
 
-        # Build provenance and staleness info first (needed for LLM)
+        # 2. Build provenance
         provenance = _build_provenance(result)
-        staleness_info = _build_staleness_info(result)
-        
-        # Generate LLM-powered answer (with fallback)
+
+        # 3. Check staleness via the tracker (queries vector_index_metadata table)
+        tracker = StalenessTracker(config)
+        staleness_info = await tracker.check_staleness(request)
+
+        # 4. Generate LLM-powered answer (with fallback)
         answer, used_llm = await _generate_llm_answer(request, result, provenance, staleness_info)
 
         # Calculate processing time
         processing_time_ms = (time.time() - start_time) * 1000
-
-        # Build debug info if requested
-        debug: dict[str, Any] | None = None
-        if request.include_provenance:
-            debug = {
-                "retrievers_used": result.metadata.get("retrievers_used", []),
-                "semantic_chunk_count": len(result.semantic_chunks),
-                "structured_row_count": len(result.structured_rows),
-                "spatial_row_count": len(result.spatial_rows),
-                "query_classification": result.metadata.get("query_type"),
-                "used_llm": used_llm,
-            }
 
         response = QueryResponse(
             query_id=query_id,
             answer=answer,
             query_type=query_type,
             processing_time_ms=processing_time_ms,
-            provenance=provenance,
-            staleness_info=staleness_info,
+            provenance=provenance if request.include_provenance else None,
+            staleness_info=staleness_info if request.include_staleness_info else None,
         )
-        
+
+        # 5. Log query for evaluation (non-blocking; errors are swallowed)
+        query_logger = QueryLogger(config)
+        try:
+            await query_logger.log_query(query_id, request, response)
+        except Exception as log_err:
+            logger.warning(f"Failed to log query {query_id}: {log_err}")
+
         logger.info(
             f"Query {query_id}: {query_type.value} | "
             f"chunks={len(result.semantic_chunks)} rows={len(result.structured_rows)} "
             f"spatial={len(result.spatial_rows)} | {processing_time_ms:.1f}ms"
         )
-        
+
         return response
 
     except Exception as e:

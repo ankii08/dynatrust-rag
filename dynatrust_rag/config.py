@@ -13,11 +13,11 @@ from typing import Optional
 @dataclass
 class DatabaseConfig:
     """PostgreSQL/PostGIS database configuration."""
-    host: str = field(default_factory=lambda: os.getenv("POSTGRES_HOST", "postgres"))
+    host: str = field(default_factory=lambda: os.getenv("POSTGRES_HOST", "localhost"))
     port: int = field(default_factory=lambda: int(os.getenv("POSTGRES_PORT", "5432")))
     database: str = field(default_factory=lambda: os.getenv("POSTGRES_DB", "atlas4d"))
     user: str = field(default_factory=lambda: os.getenv("POSTGRES_USER", "atlas4d_app"))
-    password: str = field(default_factory=lambda: os.getenv("PGPASSWORD", "atlas4d_dev"))
+    password: str = field(default_factory=lambda: os.getenv("POSTGRES_PASSWORD", os.getenv("PGPASSWORD", "")))
     
     @property
     def dsn(self) -> str:
@@ -102,9 +102,12 @@ class DynaTrustConfig:
 
 
 # Global configuration instance
-config = DynaTrustConfig()
+_config: DynaTrustConfig | None = None
 
 
 def get_config() -> DynaTrustConfig:
-    """Get the global configuration instance."""
-    return config
+    """Get the global configuration instance (created lazily)."""
+    global _config
+    if _config is None:
+        _config = DynaTrustConfig()
+    return _config

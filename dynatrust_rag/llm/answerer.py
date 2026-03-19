@@ -169,9 +169,9 @@ class OpenAILLMProvider(LLMProvider):
     OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
     
     def __init__(self, model_name: str | None = None, api_key: str | None = None):
-        super().__init__(model_name or LLM_MODEL or DEFAULT_MODELS["openai"])
-        self.api_key = api_key or OPENAI_API_KEY
-        
+        super().__init__(model_name or os.getenv("DYNATRUST_LLM_MODEL", "") or DEFAULT_MODELS["openai"])
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
+
         if not self.api_key:
             raise ValueError("OpenAI API key required for OpenAI LLM provider")
         
@@ -475,8 +475,8 @@ class AnswerGenerator:
 
 def _create_default_provider() -> LLMProvider:
     """Create the default LLM provider based on configuration."""
-    provider_name = LLM_PROVIDER.lower()
-    
+    provider_name = os.getenv("DYNATRUST_LLM_PROVIDER", "local").lower()
+
     if provider_name == "openai":
         try:
             return OpenAILLMProvider()

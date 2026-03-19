@@ -12,6 +12,9 @@ import os
 import asyncio
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -69,13 +72,14 @@ dynamic spatial-relational PostgreSQL/PostGIS databases.
     lifespan=lifespan,
 )
 
-# CORS
+# CORS - restrict in production; allow all origins for local development only
+ALLOWED_ORIGINS = os.getenv("DYNATRUST_CORS_ORIGINS", "http://localhost:3000,http://localhost:8090").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Include the DynaTrust router

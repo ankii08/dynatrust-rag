@@ -24,8 +24,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-# Add parent to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "services"))
+# Add repo root to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
 
 from dynatrust_rag.config import DynaTrustConfig
 from dynatrust_rag.evaluation.logger import QueryLogger

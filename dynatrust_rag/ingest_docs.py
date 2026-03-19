@@ -5,9 +5,9 @@ DynaTrust-RAG Document Ingestion CLI
 Command-line tool for ingesting documents into the DynaTrust-RAG vector store.
 
 Usage:
-    python -m services.dynatrust_rag.ingest_docs ./sample_docs
-    python -m services.dynatrust_rag.ingest_docs ./docs --source-type documentation
-    python -m services.dynatrust_rag.ingest_docs ./api --extensions .md,.txt
+    python -m dynatrust_rag.ingest_docs ./sample_docs
+    python -m dynatrust_rag.ingest_docs ./docs --source-type documentation
+    python -m dynatrust_rag.ingest_docs ./api --extensions .md,.txt
 
 Environment Variables:
     DYNATRUST_EMBEDDING_PROVIDER: "openai" or "local" (default: openai)
@@ -20,11 +20,11 @@ Environment Variables:
 Example:
     # Ingest all markdown files from docs folder
     export OPENAI_API_KEY="sk-..."
-    python -m services.dynatrust_rag.ingest_docs ./docs
+    python -m dynatrust_rag.ingest_docs ./docs
 
     # Use local provider for testing (no API key needed)
     export DYNATRUST_EMBEDDING_PROVIDER=local
-    python -m services.dynatrust_rag.ingest_docs ./docs
+    python -m dynatrust_rag.ingest_docs ./docs
 """
 
 from __future__ import annotations
@@ -32,17 +32,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+
+from dotenv import load_dotenv
+load_dotenv()
 import os
 import sys
 from pathlib import Path
 from typing import List, Set
 
 # Add parent to path for module imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from services.dynatrust_rag.db.connection import init_pool, close_pool, get_pool
-from services.dynatrust_rag.embedding import get_default_embedding_provider
-from services.dynatrust_rag.ingestion import ingest_file
+from dynatrust_rag.db.connection import init_pool, close_pool, get_pool
+from dynatrust_rag.embedding import get_default_embedding_provider
+from dynatrust_rag.ingestion import ingest_file
 
 
 # Configure logging
@@ -195,16 +198,16 @@ def main():
         epilog="""
 Examples:
     # Ingest markdown files from docs folder
-    python -m services.dynatrust_rag.ingest_docs ./docs
+    python -m dynatrust_rag.ingest_docs ./docs
 
     # Ingest with specific extensions
-    python -m services.dynatrust_rag.ingest_docs ./data --extensions .md,.txt,.log
+    python -m dynatrust_rag.ingest_docs ./data --extensions .md,.txt,.log
 
     # Non-recursive ingestion
-    python -m services.dynatrust_rag.ingest_docs ./data --no-recursive
+    python -m dynatrust_rag.ingest_docs ./data --no-recursive
 
     # Use local embedding provider for testing
-    DYNATRUST_EMBEDDING_PROVIDER=local python -m services.dynatrust_rag.ingest_docs ./docs
+    DYNATRUST_EMBEDDING_PROVIDER=local python -m dynatrust_rag.ingest_docs ./docs
         """,
     )
     

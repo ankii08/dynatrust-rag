@@ -142,7 +142,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             ValueError: If no API key is available
         """
         super().__init__(model_name)
-        self.api_key = api_key or OPENAI_API_KEY
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
         
         if not self.api_key:
             raise ValueError(
@@ -540,7 +540,7 @@ async def get_default_embedding_provider() -> EmbeddingProvider:
     if _default_provider is not None:
         return _default_provider
     
-    provider_name = EMBEDDING_PROVIDER.lower()
+    provider_name = os.getenv("DYNATRUST_EMBEDDING_PROVIDER", "openai").lower()
     
     if provider_name == "openai":
         try:
