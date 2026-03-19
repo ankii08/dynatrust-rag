@@ -44,6 +44,11 @@ and returns answers with **full provenance** and **index staleness** metadata. T
   - Classifies freshness and adjusts retrieval strategy (down-weight or disable semantic results when stale).
   - Staleness info is passed into the LLM prompt and returned in the API response.
 
+- **LLM Output Validation**
+  - `OutputSchemaValidator` checks LLM answers against provenance for entity grounding.
+  - Detects ungrounded identifiers (entities mentioned in the answer but absent from retrieved sources).
+  - Configurable length bounds and grounding ratio thresholds.
+
 - **Query/Answer Logging**
   - All queries and answers are logged to `dynatrust.queries` / `dynatrust.answers` with full provenance JSON.
   - `run_eval.py` can measure accuracy, hallucination rate, and latency percentiles (P50/P95/P99).
@@ -113,9 +118,18 @@ See `.env.example` for all supported variables. To run without external APIs, se
 
 ### 3. Setup PostgreSQL schema
 
-Requires PostgreSQL 15 with `pgvector` and PostGIS installed.
+Requires PostgreSQL 15+ with `pgvector` and PostGIS extensions.
 
-    psql -U postgres -d atlas4d -f sql/schema/002_dynatrust_rag.sql
+    createdb atlas4d
+    psql -d atlas4d -c "CREATE EXTENSION IF NOT EXISTS vector;"
+    psql -d atlas4d -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+    psql -d atlas4d -f sql/schema/001_init.sql
+    psql -d atlas4d -f sql/schema/002_dynatrust_rag.sql
+
+Optionally load demo data:
+
+    psql -d atlas4d -f sql/seed/demo_burgas.sql
+    psql -d atlas4d -f sql/seed/demo_telecom.sql
 
 This creates tables in the `dynatrust` schema, including:
 
@@ -139,14 +153,15 @@ This will:
 
 ### 5. Run the API server
 
-    uvicorn dynatrust_rag.main:app --port 8090
+    uvicorn dynatrust_rag.main:app --reload
 
 ### 6. Send a query
 
-    curl -X POST http://localhost:8090/dynatrust/query \
+    curl -X POST http://localhost:8000/dynatrust/query \
       -H "Content-Type: application/json" \
       -d '{
             "question": "What telecom anomalies were detected near Burgas?",
+            "spatial": {"latitude": 42.5, "longitude": 27.46, "radius_meters": 5000},
             "include_provenance": true
           }'
 
@@ -158,10 +173,10 @@ This will:
 |---------------------------------|------------------------------------------|----------------|
 | `GEMINI_API_KEY`                | Google Gemini API key                    | (optional)     |
 | `OPENAI_API_KEY`                | OpenAI API key                           | (optional)     |
-| `POSTGRES_HOST`                 | PostgreSQL host                          | `localhost`     |
-| `POSTGRES_PORT`                 | PostgreSQL port                          | `5432`          |
-| `POSTGRES_USER`                 | PostgreSQL user                          | `postgres`      |
-| `POSTGRES_PASSWORD`             | PostgreSQL password                      | `""`            |
+| `POSTGRES_HOST`                 | PostgreSQL host                          | `localhost`      |
+| `POSTGRES_PORT`                 | PostgreSQL port                          | `5432`           |
+| `POSTGRES_USER`                 | PostgreSQL user                          | `atlas4d_app`    |
+| `POSTGRES_PASSWORD`             | PostgreSQL password                      | `""`             |
 | `POSTGRES_DB`                   | PostgreSQL database name                 | `atlas4d`       |
 | `DYNATRUST_EMBEDDING_PROVIDER`  | `gemini`, `openai`, or `local`           | `openai`        |
 | `DYNATRUST_LLM_PROVIDER`        | `gemini`, `openai`, or `local`           | `local`         |
@@ -175,35 +190,43 @@ A typical response from `POST /dynatrust/query`:
 
 ```json
 {
-  "query_id": "2fe99c55-ac7f-45c6-b92a-363859c57666",
+  "query_id": "f1ab235d-3d43-4e51-945b-ee43d44392d1",
   "answer": "The telecom anomalies detected near Burgas include network issues such as high latency, packet loss on switches, and power degradation in CPE devices...",
-  "query_type": "text_only",
-  "processing_time_ms": 245.3,
+  "query_type": "hybrid",
+  "processing_time_ms": 305.5,
   "provenance": {
     "steps": [
       {
         "type": "text_chunk",
-        "chunk_ids": ["docs/blog/WHY_ATLAS4D.md#chunk_7", "docs/README.md#chunk_0"],
-        "similarity_scores": [0.75, 0.68]
+        "chunk_ids": [
+          "docs/case-studies/TELECOM_BURGAS_OUTLINE.md#chunk_0",
+          "docs/modules/TELECOM_PROFILE.md#chunk_8"
+        ],
+        "similarity_scores": [0.579, 0.544]
+      },
+      {
+        "type": "spatial",
+        "tables": []
       }
     ],
-    "source_docs": ["docs/blog/WHY_ATLAS4D.md", "docs/README.md"],
+    "source_docs": ["docs/case-studies/TELECOM_BURGAS_OUTLINE.md", "docs/modules/TELECOM_PROFILE.md"],
     "sql_executed": [
-      "SELECT id, doc_id, ... FROM dynatrust.document_chunks ORDER BY embedding <-> '[...]'::vector LIMIT 10"
+      "SELECT id, doc_id, ... FROM dynatrust.document_chunks ORDER BY embedding <-> '[...]'::vector LIMIT 10",
+      "SELECT id, ST_AsText(geom), ST_Distance(...) FROM dynatrust.spatial_points WHERE ST_DWithin(..., 5000.0)"
     ],
     "row_references": [],
-    "total_chunks_retrieved": 2,
+    "total_chunks_retrieved": 10,
     "total_rows_accessed": 0,
-    "query_classification": "text_only"
+    "query_classification": "hybrid"
   },
   "staleness_info": {
-    "vector_index_lag_seconds": 37,
-    "last_vector_refresh_at": "2025-12-10T12:00:00Z",
+    "vector_index_lag_seconds": 769,
+    "last_vector_refresh_at": "2026-03-19T03:51:13Z",
+    "newest_relevant_data_at": "2026-03-19T03:49:39Z",
     "used_semantic_results": true,
-    "staleness_detected": false,
-    "notes": "fresh"
+    "staleness_detected": false
   },
-  "timestamp": "2025-12-10T12:05:00Z"
+  "timestamp": "2026-03-19T04:04:03Z"
 }
 ```
 
@@ -260,6 +283,12 @@ This is a research prototype. Known limitations:
 - **No authentication** on API endpoints. For deployment, add an auth layer (API keys, OAuth, etc.).
 - **Hallucination detection** in `run_eval.py` uses token-overlap heuristics, not LLM-based fact checking.
 - **Sub-500ms latency** is achievable with the local LLM provider but depends on database performance and embedding API latency when using external providers.
+
+---
+
+## Security
+
+See [docs/SECURITY.md](docs/SECURITY.md) for the threat model, input validation, SQL safety, provenance auditability, and LLM output validation design.
 
 ---
 
