@@ -64,9 +64,10 @@ class SpatialRetriever(BaseRetriever):
     """
     
     # Tables with spatial columns to query
-    # Format: (schema.table, geom_column, id_column, timestamp_column)
-    SPATIAL_TABLES: List[Tuple[str, str, str, Optional[str]]] = [
-        ("dynatrust.spatial_points", "geom", "id", "created_at"),
+    # Format:
+    # (schema.table, geom_column, id_column, timestamp_column, source_type_column)
+    SPATIAL_TABLES: List[Tuple[str, str, str, Optional[str], Optional[str]]] = [
+        ("dynatrust.spatial_points", "geom", "id", "created_at", None),
     ]
     
     def __init__(
@@ -119,12 +120,13 @@ class SpatialRetriever(BaseRetriever):
         # Calculate per-table limit
         per_table_limit = max(10, limit // len(self.SPATIAL_TABLES))
         
-        for table_name, geom_col, id_col, ts_col in self.SPATIAL_TABLES:
+        for table_name, geom_col, id_col, ts_col, source_type_col in self.SPATIAL_TABLES:
             rows, sql = await self._query_spatial_table(
                 table_name=table_name,
                 geom_col=geom_col,
                 id_col=id_col,
                 ts_col=ts_col,
+                source_type_col=source_type_col,
                 lat=lat,
                 lon=lon,
                 radius_meters=radius,
@@ -155,6 +157,7 @@ class SpatialRetriever(BaseRetriever):
         geom_col: str,
         id_col: str,
         ts_col: Optional[str],
+        source_type_col: Optional[str],
         lat: float,
         lon: float,
         radius_meters: float,
@@ -203,8 +206,8 @@ class SpatialRetriever(BaseRetriever):
                 param_idx += 1
         
         # Source type filter
-        if query.source_types:
-            where_clauses.append(f"source_type = ANY(${param_idx})")
+        if query.source_types and source_type_col:
+            where_clauses.append(f"{source_type_col} = ANY(${param_idx})")
             params.append(query.source_types)
             param_idx += 1
         
@@ -244,6 +247,8 @@ class SpatialRetriever(BaseRetriever):
                 records = await conn.fetch(sql, *params)
                 
                 for record in records:
+                    raw_primary_key = record["id"]
+                    primary_key = raw_primary_key if isinstance(raw_primary_key, int) else str(raw_primary_key)
                     distance = float(record["distance_meters"])
                     
                     # Convert to score (closer = higher)
@@ -263,7 +268,7 @@ class SpatialRetriever(BaseRetriever):
                     
                     row = SpatialRow(
                         table_name=table_name.split(".")[-1],  # Just table name
-                        primary_key=record["id"],
+                        primary_key=primary_key,
                         wkt_geometry=record["wkt"],
                         distance_meters=distance,
                         data=data,
@@ -293,7 +298,7 @@ class SpatialRetriever(BaseRetriever):
                     return False
                 
                 # Check at least one spatial table exists
-                for table_name, geom_col, _, _ in self.SPATIAL_TABLES:
+                for table_name, geom_col, _, _, _ in self.SPATIAL_TABLES:
                     schema, table = table_name.split(".")
                     exists = await conn.fetchval("""
                         SELECT 1 FROM information_schema.tables 

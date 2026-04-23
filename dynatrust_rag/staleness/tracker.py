@@ -38,7 +38,7 @@ class StalenessTracker:
     
     Staleness affects retrieval strategy:
     - Low staleness: Full hybrid retrieval with semantic search
-    - Medium staleness: Semantic results are down-weighted
+    - Moderate staleness: Semantic retrieval still runs, but the answerer gets a warning
     - High staleness: Semantic search is skipped entirely
     """
     
@@ -137,10 +137,10 @@ class StalenessTracker:
                         "semantic search disabled."
                     )
                 elif data_is_newer:
-                    use_semantic = True  # Still use, but will be down-weighted
+                    use_semantic = True
                     notes = (
                         f"Some source data updated after last vector refresh; "
-                        "semantic results will be down-weighted."
+                        "semantic results may miss the newest updates."
                     )
                 
                 return StalenessInfo(

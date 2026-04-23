@@ -7,7 +7,7 @@ strategies in the DynaTrust-RAG system.
 Design Principles:
 - Clean separation between semantic, spatial, and structured retrieval
 - All results carry provenance metadata for attribution tracking
-- Scores are normalized [0, 1] for consistent ranking across retriever types
+- Each retriever produces its own score in [0, 1] for local ranking
 - Type-safe with Pydantic models for serialization
 
 Data Flow:
@@ -319,3 +319,18 @@ class BaseRetriever(ABC):
         # For normalized embeddings, L2 distance ranges from 0 to 2
         # Score = 1 - (distance / 2) gives us [0, 1]
         return max(0.0, min(1.0, 1.0 - (distance / 2.0)))
+
+    @staticmethod
+    def cosine_distance_to_score(distance: float) -> float:
+        """
+        Convert pgvector cosine distance to a similarity-like score.
+
+        pgvector <=> returns cosine distance where:
+        - 0.0 is identical
+        - 1.0 is orthogonal
+        - 2.0 is opposite
+
+        We clamp opposite/negative-correlation cases to 0.0 so the score
+        remains in [0, 1] with 1.0 representing the best match.
+        """
+        return max(0.0, min(1.0, 1.0 - distance))

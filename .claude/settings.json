@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python example_query.py --question \"What telecom anomalies were detected near Burgas?\" --show-provenance --validate-output)",
+      "Bash(python example_query.py --question \"Show assets installed after 2022 that are active\" --show-provenance)",
+      "Bash(python example_query.py --question \"Show assets installed after 2022 that are active\" --show-staleness)",
+      "Bash(python example_query.py --question \"What happened within 500 meters of lat 42.48 lon 27.48 in the last 24 hours?\" --show-provenance)",
+      "Bash(python example_query.py --question \"Show assets installed after 2022 that are active\")",
+      "Bash(python example_query.py -q \"What telecom anomalies were detected near Burgas?\" --show-provenance --validate-output)",
+      "Bash(python example_query.py -q \"Show assets installed after 2022 that are active\" --show-provenance)",
+      "Bash(python example_query.py -q \"What happened within 500 meters of lat 42.48 lon 27.48 in the last 24 hours?\" --show-staleness)"
+    ]
+  }
+}

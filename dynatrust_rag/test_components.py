@@ -9,11 +9,19 @@ Run from the atlas4d-base directory:
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# This file is a standalone validation script, not a pytest test module.
+__test__ = False
+
+# Default to offline-safe providers when run manually.
+os.environ.setdefault("DYNATRUST_EMBEDDING_PROVIDER", "local")
+os.environ.setdefault("DYNATRUST_LLM_PROVIDER", "local")
 
 
 async def test_embedding_provider():

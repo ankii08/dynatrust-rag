@@ -18,8 +18,6 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -35,7 +33,7 @@ from .schemas import (
 )
 from ..retrieval.router import hybrid_retrieve
 from ..retrieval.base import RetrievalResult
-from ..llm.answerer import AnswerGenerator, get_answer_generator as _get_answer_generator
+from ..llm.answerer import get_answer_generator as _get_answer_generator
 from ..staleness.tracker import StalenessTracker
 from ..evaluation.logger import QueryLogger
 from ..config import get_config
@@ -50,58 +48,64 @@ def _build_provenance(result: RetrievalResult) -> Provenance:
     """Convert RetrievalResult into a Provenance object for the response."""
     steps: list[ProvenanceStep] = []
     row_refs: list[RowReference] = []
+    structured_row_refs: list[RowReference] = []
+    spatial_row_refs: list[RowReference] = []
+    sql_by_retriever = result.metadata.get("sql_by_retriever", {})
 
-    # Add retrieval step for each retriever used
+    for row in result.structured_rows:
+        ref = RowReference(
+            table=row.table_name,
+            id=row.primary_key,
+            columns_used=list(row.data.keys()) if row.data else [],
+        )
+        structured_row_refs.append(ref)
+        row_refs.append(ref)
+
+    for row in result.spatial_rows:
+        ref = RowReference(
+            table=row.table_name,
+            id=row.primary_key,
+            columns_used=list(row.data.keys()) if row.data else [],
+        )
+        spatial_row_refs.append(ref)
+        row_refs.append(ref)
+
     for retriever_name in result.metadata.get("retrievers_used", []):
-        # Map retriever name to ProvenanceStepType
         if retriever_name == "semantic":
-            step_type = ProvenanceStepType.TEXT_CHUNK
             chunk_ids = [chunk.chunk_id for chunk in result.semantic_chunks]
             scores = [chunk.score or 0.0 for chunk in result.semantic_chunks]
             steps.append(
                 ProvenanceStep(
-                    type=step_type,
+                    type=ProvenanceStepType.TEXT_CHUNK,
                     chunk_ids=chunk_ids if chunk_ids else None,
                     similarity_scores=scores if scores else None,
                 )
             )
         elif retriever_name == "spatial":
-            step_type = ProvenanceStepType.SPATIAL
+            step_sql = "\n\n".join(sql_by_retriever.get("spatial", [])) or None
             steps.append(
                 ProvenanceStep(
-                    type=step_type,
-                    tables=list({r.table_name for r in result.spatial_rows}),
+                    type=ProvenanceStepType.SPATIAL,
+                    query=step_sql,
+                    tables=list({r.table_name for r in result.spatial_rows}) or None,
+                    rows=spatial_row_refs or None,
                 )
             )
         elif retriever_name == "structured":
-            step_type = ProvenanceStepType.SQL
+            step_sql = "\n\n".join(sql_by_retriever.get("structured", [])) or None
             steps.append(
                 ProvenanceStep(
-                    type=step_type,
-                    query=result.executed_sql[0] if result.executed_sql else None,
-                    tables=list({r.table_name for r in result.structured_rows}),
+                    type=ProvenanceStepType.SQL,
+                    query=step_sql,
+                    tables=list({r.table_name for r in result.structured_rows}) or None,
+                    rows=structured_row_refs or None,
                 )
             )
 
-    # Collect row references from structured rows
-    for row in result.structured_rows:
-        row_refs.append(
-            RowReference(
-                table=row.table_name,
-                id=row.primary_key,
-                columns_used=list(row.data.keys()) if row.data else [],
-            )
-        )
-
-    # Collect row references from spatial rows
-    for row in result.spatial_rows:
-        row_refs.append(
-            RowReference(
-                table=row.table_name,
-                id=row.primary_key,
-                columns_used=list(row.data.keys()) if row.data else [],
-            )
-        )
+    try:
+        query_classification = QueryType(result.metadata.get("query_type", QueryType.HYBRID.value))
+    except ValueError:
+        query_classification = QueryType.HYBRID
 
     # Build source docs from semantic chunks
     source_docs = list(
@@ -115,6 +119,7 @@ def _build_provenance(result: RetrievalResult) -> Provenance:
         steps=steps,
         total_rows_accessed=len(result.structured_rows) + len(result.spatial_rows),
         total_chunks_retrieved=len(result.semantic_chunks),
+        query_classification=query_classification,
     )
 
 
@@ -225,26 +230,33 @@ async def query_endpoint(request: QueryRequest) -> QueryResponse:
     config = get_config()
 
     try:
-        # 1. Run hybrid retrieval
-        result: RetrievalResult = await hybrid_retrieve(request)
-
-        # Determine query type from result metadata
-        retrievers = result.metadata.get("retrievers_used", [])
-        if len(retrievers) > 1:
-            query_type = QueryType.HYBRID
-        elif "spatial" in retrievers:
-            query_type = QueryType.SPATIAL
-        elif "structured" in retrievers:
-            query_type = QueryType.STRUCTURED
-        else:
-            query_type = QueryType.TEXT_ONLY
-
-        # 2. Build provenance
-        provenance = _build_provenance(result)
-
-        # 3. Check staleness via the tracker (queries vector_index_metadata table)
+        # 1. Check staleness before retrieval so we can gate semantic search.
         tracker = StalenessTracker(config)
         staleness_info = await tracker.check_staleness(request)
+        retrieval_request = request
+        if not staleness_info.used_semantic_results and not request.force_live_data_only:
+            retrieval_request = request.model_copy(update={"force_live_data_only": True})
+
+        # 2. Run hybrid retrieval
+        result: RetrievalResult = await hybrid_retrieve(retrieval_request)
+
+        # Determine query type from result metadata
+        query_type_value = result.metadata.get("query_type")
+        if query_type_value:
+            query_type = QueryType(query_type_value)
+        else:
+            retrievers = result.metadata.get("retrievers_used", [])
+            if len(retrievers) > 1:
+                query_type = QueryType.HYBRID
+            elif "spatial" in retrievers:
+                query_type = QueryType.SPATIAL
+            elif "structured" in retrievers:
+                query_type = QueryType.STRUCTURED
+            else:
+                query_type = QueryType.TEXT_ONLY
+
+        # 3. Build provenance
+        provenance = _build_provenance(result)
 
         # 4. Generate LLM-powered answer (with fallback)
         answer, used_llm = await _generate_llm_answer(request, result, provenance, staleness_info)

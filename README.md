@@ -1,6 +1,6 @@
 # DynaTrust-RAG
 
-**DynaTrust-RAG** is a spatiotemporal Retrieval-Augmented Generation (RAG) system built on top of PostgreSQL 15, PostGIS, and pgvector.
+**DynaTrust-RAG** is a spatiotemporal Retrieval-Augmented Generation (RAG) system built on top of PostgreSQL, PostGIS, and pgvector.
 
 It combines:
 
@@ -18,10 +18,10 @@ and returns answers with **full provenance** and **index staleness** metadata. T
 
 - **Hybrid Retrieval Pipeline**
   - Keyword-based `QueryClassifier` routes queries to:
-    - **Semantic** retriever (pgvector `<->` similarity search)
+    - **Semantic** retriever (pgvector `<=>` cosine-distance search)
     - **Spatial** retriever (PostGIS `ST_DWithin` / geography queries)
     - **Structured** retriever (parameterized SQL filters on dates, status, etc.)
-  - `HybridRetrievalRouter` merges and normalizes results from multiple backends.
+  - `HybridRetrievalRouter` merges results from multiple backends and records retriever-specific SQL for provenance.
 
 - **Multi-Provider Embeddings**
   - `text-embedding-004` (Gemini), `text-embedding-3-small` (OpenAI), or a deterministic local hash provider for offline testing.
@@ -41,7 +41,7 @@ and returns answers with **full provenance** and **index staleness** metadata. T
 
 - **Staleness Detection**
   - `StalenessTracker` queries `dynatrust.vector_index_metadata` to compute lag since last vector index refresh.
-  - Classifies freshness and adjusts retrieval strategy (down-weight or disable semantic results when stale).
+  - Disables semantic retrieval when the index is too stale and surfaces freshness notes in the answer context.
   - Staleness info is passed into the LLM prompt and returned in the API response.
 
 - **LLM Output Validation**
@@ -81,7 +81,7 @@ High-level flow for `POST /dynatrust/query`:
                     v
           +----------------------+
           | HybridRetrievalRouter|
-          |  (merge & normalize) |
+          |    (merge results)   |
           +----------------------+
                     |
           +---------+-----------+
@@ -211,7 +211,7 @@ A typical response from `POST /dynatrust/query`:
     ],
     "source_docs": ["docs/case-studies/TELECOM_BURGAS_OUTLINE.md", "docs/modules/TELECOM_PROFILE.md"],
     "sql_executed": [
-      "SELECT id, doc_id, ... FROM dynatrust.document_chunks ORDER BY embedding <-> '[...]'::vector LIMIT 10",
+      "SELECT id, doc_id, ... FROM dynatrust.document_chunks ORDER BY embedding <=> '[...]'::vector LIMIT 10",
       "SELECT id, ST_AsText(geom), ST_Distance(...) FROM dynatrust.spatial_points WHERE ST_DWithin(..., 5000.0)"
     ],
     "row_references": [],

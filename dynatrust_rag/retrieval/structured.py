@@ -71,9 +71,10 @@ class StructuredRetriever(BaseRetriever):
     """
     
     # Tables to query with structured filters
-    # Format: (schema.table, id_column, timestamp_column, additional_columns)
-    STRUCTURED_TABLES: List[Tuple[str, str, str, List[str]]] = [
-        ("dynatrust.assets", "id", "install_date", ["name", "status", "asset_type", "location"]),
+    # Format:
+    # (schema.table, id_column, timestamp_column, additional_columns, source_type_column)
+    STRUCTURED_TABLES: List[Tuple[str, str, str, List[str], Optional[str]]] = [
+        ("dynatrust.assets", "id", "install_date", ["name", "status", "asset_type", "location"], None),
     ]
     
     def __init__(self, pool=None, default_limit: int = DEFAULT_LIMIT):
@@ -120,12 +121,13 @@ class StructuredRetriever(BaseRetriever):
         # Calculate per-table limit
         per_table_limit = max(10, limit // len(self.STRUCTURED_TABLES))
         
-        for table_name, id_col, ts_col, extra_cols in self.STRUCTURED_TABLES:
+        for table_name, id_col, ts_col, extra_cols, source_type_col in self.STRUCTURED_TABLES:
             rows, sql = await self._query_structured_table(
                 table_name=table_name,
                 id_col=id_col,
                 ts_col=ts_col,
                 extra_cols=extra_cols,
+                source_type_col=source_type_col,
                 filters=filters,
                 limit=per_table_limit,
             )
@@ -224,6 +226,7 @@ class StructuredRetriever(BaseRetriever):
         id_col: str,
         ts_col: str,
         extra_cols: List[str],
+        source_type_col: Optional[str],
         filters: Dict[str, Any],
         limit: int,
     ) -> Tuple[List[StructuredRow], str]:
@@ -288,8 +291,8 @@ class StructuredRetriever(BaseRetriever):
             param_idx += 1
         
         # Source types filter
-        if "source_types" in filters:
-            where_clauses.append(f"source_type = ANY(${param_idx})")
+        if "source_types" in filters and source_type_col:
+            where_clauses.append(f"{source_type_col} = ANY(${param_idx})")
             params.append(filters["source_types"])
             param_idx += 1
         
@@ -338,6 +341,9 @@ class StructuredRetriever(BaseRetriever):
                 records = await conn.fetch(sql, *params)
                 
                 for record in records:
+                    raw_primary_key = record[id_col]
+                    primary_key = raw_primary_key if isinstance(raw_primary_key, int) else str(raw_primary_key)
+
                     # Build data dict
                     data = {}
                     for key, value in record.items():
@@ -352,7 +358,7 @@ class StructuredRetriever(BaseRetriever):
                     
                     row = StructuredRow(
                         table_name=table_name.split(".")[-1],
-                        primary_key=record[id_col],
+                        primary_key=primary_key,
                         data=data,
                         score=1.0,  # Structured matches are binary
                     )
@@ -374,7 +380,7 @@ class StructuredRetriever(BaseRetriever):
         try:
             async with get_connection() as conn:
                 # Check at least one table exists
-                for table_name, _, _, _ in self.STRUCTURED_TABLES:
+                for table_name, _, _, _, _ in self.STRUCTURED_TABLES:
                     schema, table = table_name.split(".")
                     exists = await conn.fetchval("""
                         SELECT 1 FROM information_schema.tables 

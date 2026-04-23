@@ -24,8 +24,7 @@ Design:
 
 import re
 from dataclasses import dataclass
-from enum import Enum
-from typing import List, Optional, Set
+from typing import List, Optional
 
 from ..api.schemas import QueryRequest, QueryType
 from .base import RetrievalResult
@@ -69,21 +68,28 @@ class QueryClassifier:
     
     # Keywords indicating spatial intent
     SPATIAL_KEYWORDS = {
-        "near", "within", "around", "close to", "nearby",
-        "meters", "kilometres", "kilometers", "km", "miles",
+        "near", "within", "around", "nearby",
+        "meters", "meter", "kilometres", "kilometers", "km", "miles",
         "location", "area", "region", "zone", "port", "city",
         "latitude", "longitude", "coordinates", "radius",
     }
+    SPATIAL_PHRASES = {"close to", "next to", "radius of"}
     
     # Keywords indicating structured/SQL intent  
     STRUCTURED_KEYWORDS = {
         "after", "before", "since", "until", "between",
-        "status", "type", "severity", "count", "how many",
-        "list all", "show all", "installed", "created",
+        "status", "type", "severity", "count",
+        "installed", "created", "active", "inactive", "decommissioned",
     }
+    STRUCTURED_PHRASES = {"how many", "list all", "show all"}
     
     # Patterns for years
-    YEAR_PATTERN = re.compile(r'\b(19|20)\d{2}\b')
+    YEAR_PATTERN = re.compile(r'\b(?:19|20)\d{2}\b')
+
+    @staticmethod
+    def _tokenize_question(question: str) -> set[str]:
+        """Tokenize the question into normalized word-like units."""
+        return set(re.findall(r"\b[\w-]+\b", question.lower()))
     
     def classify(self, query: QueryRequest) -> QueryClassification:
         """
@@ -97,7 +103,7 @@ class QueryClassifier:
         """
         signals: List[str] = []
         question_lower = query.question.lower()
-        question_words = set(question_lower.split())
+        question_words = self._tokenize_question(query.question)
         
         # Check for explicit spatial constraint
         has_spatial_constraint = query.spatial is not None
@@ -108,17 +114,24 @@ class QueryClassifier:
         spatial_keywords_found = self.SPATIAL_KEYWORDS & question_words
         if spatial_keywords_found:
             signals.append(f"spatial_keywords: {spatial_keywords_found}")
-        
+
         # Check for spatial phrases (multi-word)
-        spatial_phrases = ["close to", "next to", "radius of"]
-        for phrase in spatial_phrases:
+        spatial_phrases_found = []
+        for phrase in self.SPATIAL_PHRASES:
             if phrase in question_lower:
                 signals.append(f"spatial_phrase: {phrase}")
-        
+                spatial_phrases_found.append(phrase)
+
         # Check for structured keywords
         structured_keywords_found = self.STRUCTURED_KEYWORDS & question_words
         if structured_keywords_found:
             signals.append(f"structured_keywords: {structured_keywords_found}")
+
+        structured_phrases_found = []
+        for phrase in self.STRUCTURED_PHRASES:
+            if phrase in question_lower:
+                signals.append(f"structured_phrase: {phrase}")
+                structured_phrases_found.append(phrase)
         
         # Check for year patterns
         years = self.YEAR_PATTERN.findall(question_lower)
@@ -134,8 +147,17 @@ class QueryClassifier:
             signals.append(f"source_types_filter: {query.source_types}")
         
         # Determine retriever usage
-        use_spatial = has_spatial_constraint or bool(spatial_keywords_found)
-        use_structured = bool(structured_keywords_found) or bool(years) or query.time_window is not None
+        use_spatial = (
+            has_spatial_constraint
+            or bool(spatial_keywords_found)
+            or bool(spatial_phrases_found)
+        )
+        use_structured = (
+            bool(structured_keywords_found)
+            or bool(structured_phrases_found)
+            or bool(years)
+            or query.time_window is not None
+        )
         
         # Semantic is always useful unless forced off
         use_semantic = not query.force_live_data_only
@@ -223,6 +245,7 @@ class HybridRetrievalRouter:
         # Track which retrievers we use
         retrievers_used: List[str] = []
         results: List[RetrievalResult] = []
+        sql_by_retriever: dict[str, List[str]] = {}
         
         # Allocate limits based on how many retrievers we'll use
         num_retrievers = sum([
@@ -237,18 +260,21 @@ class HybridRetrievalRouter:
             semantic_result = await self.semantic.retrieve(query, limit=per_retriever_limit)
             results.append(semantic_result)
             retrievers_used.append("semantic")
+            sql_by_retriever["semantic"] = list(semantic_result.executed_sql)
         
         # Run spatial retrieval
         if classification.use_spatial:
             spatial_result = await self.spatial.retrieve(query, limit=per_retriever_limit)
             results.append(spatial_result)
             retrievers_used.append("spatial")
+            sql_by_retriever["spatial"] = list(spatial_result.executed_sql)
         
         # Run structured retrieval
         if classification.use_structured:
             structured_result = await self.structured.retrieve(query, limit=per_retriever_limit)
             results.append(structured_result)
             retrievers_used.append("structured")
+            sql_by_retriever["structured"] = list(structured_result.executed_sql)
         
         # Merge all results
         if not results:
@@ -270,7 +296,8 @@ class HybridRetrievalRouter:
         merged.metadata["retrievers_used"] = retrievers_used
         merged.metadata["classification_signals"] = classification.signals
         merged.metadata["classification_confidence"] = classification.confidence
-        
+        merged.metadata["sql_by_retriever"] = sql_by_retriever
+
         return merged
     
     async def health_check(self) -> dict:

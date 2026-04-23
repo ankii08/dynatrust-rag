@@ -113,9 +113,9 @@ class SemanticRetriever(BaseRetriever):
         # Convert embedding to string format for SQL
         embedding_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
         
-        # Build the SQL query
-        # Using <-> for L2 distance (pgvector)
-        # Lower distance = more similar
+        # Build the SQL query.
+        # The schema index uses vector_cosine_ops, so we query with <=> to
+        # ensure PostgreSQL can use the ANN index.
         
         if query.source_types:
             # Filter by source types
@@ -127,19 +127,19 @@ class SemanticRetriever(BaseRetriever):
                     content,
                     source_type,
                     metadata,
-                    embedding <-> $1::vector AS distance
+                    embedding <=> $1::vector AS distance
                 FROM dynatrust.document_chunks
                 WHERE source_type = ANY($2)
-                ORDER BY embedding <-> $1::vector
+                ORDER BY embedding <=> $1::vector
                 LIMIT $3
             """
             params = [embedding_str, query.source_types, k]
             sql_for_provenance = f"""
                 SELECT id, doc_id, chunk_index, content, source_type, metadata,
-                       embedding <-> '[...]'::vector AS distance
+                       embedding <=> '[...]'::vector AS distance
                 FROM dynatrust.document_chunks
                 WHERE source_type = ANY({query.source_types})
-                ORDER BY embedding <-> '[...]'::vector
+                ORDER BY embedding <=> '[...]'::vector
                 LIMIT {k}
             """
         else:
@@ -151,17 +151,17 @@ class SemanticRetriever(BaseRetriever):
                     content,
                     source_type,
                     metadata,
-                    embedding <-> $1::vector AS distance
+                    embedding <=> $1::vector AS distance
                 FROM dynatrust.document_chunks
-                ORDER BY embedding <-> $1::vector
+                ORDER BY embedding <=> $1::vector
                 LIMIT $2
             """
             params = [embedding_str, k]
             sql_for_provenance = f"""
                 SELECT id, doc_id, chunk_index, content, source_type, metadata,
-                       embedding <-> '[...]'::vector AS distance
+                       embedding <=> '[...]'::vector AS distance
                 FROM dynatrust.document_chunks
-                ORDER BY embedding <-> '[...]'::vector
+                ORDER BY embedding <=> '[...]'::vector
                 LIMIT {k}
             """
         
@@ -173,9 +173,9 @@ class SemanticRetriever(BaseRetriever):
                 rows = await conn.fetch(sql, *params)
                 
                 for row in rows:
-                    # Convert L2 distance to similarity score [0, 1]
+                    # Convert cosine distance to a similarity score [0, 1].
                     distance = float(row["distance"])
-                    score = self.vector_distance_to_score(distance)
+                    score = self.cosine_distance_to_score(distance)
                     
                     # Build chunk ID
                     chunk_id = f"{row['doc_id']}#chunk_{row['chunk_index']}"
@@ -226,6 +226,7 @@ class SemanticRetriever(BaseRetriever):
             metadata={
                 "retrievers_used": ["semantic"],
                 "chunks_retrieved": len(chunks),
+                "distance_metric": "cosine",
             },
         )
     

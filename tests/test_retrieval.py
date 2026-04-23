@@ -1,5 +1,8 @@
 """Tests for retrieval components."""
 
+import uuid
+from contextlib import asynccontextmanager
+
 import pytest
 
 from dynatrust_rag.api.schemas import QueryRequest, QueryType, SpatialConstraint
@@ -11,6 +14,8 @@ from dynatrust_rag.retrieval.base import (
     StructuredRow,
 )
 from dynatrust_rag.retrieval.router import QueryClassifier, HybridRetrievalRouter
+from dynatrust_rag.retrieval.spatial import SpatialRetriever
+from dynatrust_rag.retrieval.structured import StructuredRetriever
 
 
 class TestRetrievalResult:
@@ -107,6 +112,11 @@ class TestQueryClassifier:
         result = self.classifier.classify(req)
         assert result.use_spatial is True
 
+    def test_spatial_phrase_detection(self):
+        req = QueryRequest(question="What happened close to the port?")
+        result = self.classifier.classify(req)
+        assert result.use_spatial is True
+
     def test_spatial_with_explicit_constraint(self):
         req = QueryRequest(
             question="Show anomalies",
@@ -123,6 +133,11 @@ class TestQueryClassifier:
 
     def test_structured_keyword_detection(self):
         req = QueryRequest(question="Show all assets with status active")
+        result = self.classifier.classify(req)
+        assert result.use_structured is True
+
+    def test_structured_phrase_detection(self):
+        req = QueryRequest(question="How many active assets are there?")
         result = self.classifier.classify(req)
         assert result.use_structured is True
 
@@ -151,3 +166,69 @@ class TestQueryClassifier:
         c1 = self.classifier.classify(simple)
         c2 = self.classifier.classify(complex_)
         assert c2.confidence >= c1.confidence
+
+
+class TestLiveRowPrimaryKeys:
+    @pytest.mark.asyncio
+    async def test_structured_retriever_converts_uuid_primary_keys(self, monkeypatch):
+        record = {
+            "id": uuid.UUID("22222222-2222-2222-2222-222222222222"),
+            "install_date": "2024-06-09",
+            "name": "BG-SW-CENTRAL-02",
+            "status": "active",
+            "asset_type": "distribution_switch",
+            "location": "Burgas Central",
+        }
+
+        class FakeConn:
+            async def fetch(self, sql, *params):
+                return [record]
+
+        @asynccontextmanager
+        async def fake_get_connection():
+            yield FakeConn()
+
+        monkeypatch.setattr("dynatrust_rag.retrieval.structured.get_connection", fake_get_connection)
+
+        result = await StructuredRetriever().retrieve(
+            QueryRequest(question="Show assets installed after 2022 that are active."),
+            limit=20,
+        )
+
+        assert len(result.structured_rows) == 1
+        assert result.structured_rows[0].primary_key == "22222222-2222-2222-2222-222222222222"
+
+    @pytest.mark.asyncio
+    async def test_spatial_retriever_converts_uuid_primary_keys(self, monkeypatch):
+        record = {
+            "id": uuid.UUID("aaaaaaa1-aaaa-aaaa-aaaa-aaaaaaaaaaa1"),
+            "wkt": "POINT(27.4678 42.4926)",
+            "distance_meters": 73.0,
+            "name": "Burgas Port Fiber Hub",
+            "point_type": "telecom_site",
+            "description": "Fiber aggregation hub serving the port.",
+            "metadata": {"demo_seed": "live_demo"},
+            "created_at": "2026-04-22T00:00:00Z",
+            "geom": object(),
+        }
+
+        class FakeConn:
+            async def fetch(self, sql, *params):
+                return [record]
+
+        @asynccontextmanager
+        async def fake_get_connection():
+            yield FakeConn()
+
+        monkeypatch.setattr("dynatrust_rag.retrieval.spatial.get_connection", fake_get_connection)
+
+        result = await SpatialRetriever().retrieve(
+            QueryRequest(
+                question="What telecom sites are near Burgas port?",
+                spatial=SpatialConstraint(latitude=42.4930, longitude=27.4685, radius_meters=1500),
+            ),
+            limit=20,
+        )
+
+        assert len(result.spatial_rows) == 1
+        assert result.spatial_rows[0].primary_key == "aaaaaaa1-aaaa-aaaa-aaaa-aaaaaaaaaaa1"
